@@ -35,7 +35,7 @@
 
 // export default App
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Palette } from 'lucide-react';
+import { Plus, Trash2, Palette, ChevronUp, ChevronDown } from 'lucide-react';
 
 const PRESET_COLORS = [
   '#fef3c7', '#fef08a', '#fde047', '#facc15', '#eab308',
@@ -73,6 +73,109 @@ const NoteSquare = ({
   const showColorPicker = openColorPickerNoteId === note.id;
   const textareaRef = useRef(null);
   const noteRef = useRef(null);
+  const [showTextMenu, setShowTextMenu] = useState(false);
+  const suppressNextContextMenuRef = useRef(false);
+
+  useEffect(() => {
+    const handler = () => setShowTextMenu(false);
+    document.addEventListener('closeTextMenus', handler);
+    return () => document.removeEventListener('closeTextMenus', handler);
+  }, []);
+
+  // --- Lightweight Markdown support (no external deps) ---
+  const escapeHtml = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+  const processInline = (s) => {
+    // inline code first
+    s = s.replace(/`([^`]+)`/g, (m, code) => `<code class="px-1 py-0.5 bg-black/10 rounded">${escapeHtml(code)}</code>`);
+    // bold
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // italic (single *)
+    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // links [text](url)
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
+      const safe = /^https?:\/\//i.test(url) ? url : '#';
+      const label = escapeHtml(text);
+      return `<a href="${safe}" target="_blank" rel="noopener noreferrer" class="text-blue-700 underline">${label}</a>`;
+    });
+    return s;
+  };
+
+  const markdownToHtml = (input) => {
+    if (!input) return '';
+    const lines = String(input).split(/\r?\n/);
+    let html = '';
+    let inUL = false;
+    let inOL = false;
+    let i = 0;
+
+    const flushLists = () => {
+      if (inUL) { html += '</ul>'; inUL = false; }
+      if (inOL) { html += '</ol>'; inOL = false; }
+    };
+
+    while (i < lines.length) {
+      let line = lines[i];
+      // code block ```
+      if (/^\s*```/.test(line)) {
+        flushLists();
+        i++;
+        let code = '';
+        while (i < lines.length && !/^\s*```/.test(lines[i])) {
+          code += (code ? '\n' : '') + lines[i];
+          i++;
+        }
+        html += `<pre class="bg-black/10 rounded p-2 overflow-auto"><code>${escapeHtml(code)}</code></pre>`;
+        i++; // skip closing ```
+        continue;
+      }
+
+      // headings
+      const h = line.match(/^(#{1,6})\s+(.*)$/);
+      if (h) {
+        flushLists();
+        const level = h[1].length;
+        html += `<h${level} class="font-semibold mt-1 mb-1">${processInline(escapeHtml(h[2]))}</h${level}>`;
+        i++;
+        continue;
+      }
+
+      // unordered list
+      if (/^\s*[-*]\s+/.test(line)) {
+        if (!inUL) { flushLists(); html += '<ul class="list-disc ml-5">'; inUL = true; }
+        html += `<li>${processInline(escapeHtml(line.replace(/^\s*[-*]\s+/, '')))}</li>`;
+        i++;
+        continue;
+      }
+
+      // ordered list
+      if (/^\s*\d+\.\s+/.test(line)) {
+        if (!inOL) { flushLists(); html += '<ol class="list-decimal ml-5">'; inOL = true; }
+        html += `<li>${processInline(escapeHtml(line.replace(/^\s*\d+\.\s+/, '')))}</li>`;
+        i++;
+        continue;
+      }
+
+      // empty line => paragraph break
+      if (/^\s*$/.test(line)) {
+        flushLists();
+        html += '<br />';
+        i++;
+        continue;
+      }
+
+      // paragraph
+      flushLists();
+      html += `<p>${processInline(escapeHtml(line))}</p>`;
+      i++;
+    }
+    flushLists();
+    return html;
+  };
 
   const checkOverlap = (x, y, width, height, excludeId) => {
     const siblings = allNotes.filter(n => n.id !== excludeId);
@@ -105,7 +208,14 @@ const NoteSquare = ({
     e.preventDefault();
     e.stopPropagation();
     onHideContextMenu?.();
-    setOpenColorPickerNoteId(null);
+    // If right-click closed any overlay here, suppress the upcoming contextmenu
+    const hadColor = openColorPickerNoteId !== null;
+    const hadText = showTextMenu;
+    if (hadColor) setOpenColorPickerNoteId(null);
+    if (hadText) setShowTextMenu(false);
+    if (e.button === 2 && (hadColor || hadText)) {
+      suppressNextContextMenuRef.current = true;
+    }
     setIsDragging(true);
     setDragStart({
       x: e.clientX,
@@ -127,6 +237,7 @@ const NoteSquare = ({
     }
     e.stopPropagation();
     onHideContextMenu?.();
+    setShowTextMenu(false);
     setOpenColorPickerNoteId(null);
     setIsEditing(true);
     setTimeout(() => textareaRef.current?.focus(), 0);
@@ -207,22 +318,34 @@ const NoteSquare = ({
     e.preventDefault();
     e.stopPropagation();
     onHideContextMenu?.();
-    const wasColorPickerOpen = showColorPicker;
-    setOpenColorPickerNoteId(null);
-    if (isEditing) {
-      setIsEditing(false);
+    if (suppressNextContextMenuRef.current) {
+      suppressNextContextMenuRef.current = false;
       return;
     }
-    if (wasColorPickerOpen) {
-      return;
+    // Determine if anything is open anywhere: color menu, text menu, or editing
+    const anyColorMenuOpen = !!document.querySelector('.color-picker') || openColorPickerNoteId !== null || showColorPicker;
+    const anyTextMenuOpen = showTextMenu || !!document.querySelector('.text-menu');
+    const active = document.activeElement as HTMLElement | null;
+    const anyEditing = isEditing || (active && active.tagName === 'TEXTAREA');
+
+    if (anyColorMenuOpen || anyTextMenuOpen || anyEditing) {
+      // Close all overlays and exit editing
+      setOpenColorPickerNoteId(null);
+      setShowTextMenu(false);
+      try { document.dispatchEvent(new Event('closeTextMenus')); } catch(_) {}
+      if (isEditing) setIsEditing(false);
+      if (active && (active as any).blur) (active as any).blur();
+      return; // do not open context menu
     }
+
+    // Otherwise open the Add Child menu for this note
     onShowContextMenu?.(e.clientX, e.clientY, note.id);
   };
 
   return (
     <div
       ref={noteRef}
-      className="border-2 rounded absolute select-none"
+      className="border rounded absolute select-none"
       style={{
         backgroundColor: note.color,
         width: note.width || '280px',
@@ -236,15 +359,16 @@ const NoteSquare = ({
       onDoubleClick={handleDoubleClick}
     >
       <div className="flex justify-between items-center p-2 border-b border-gray-400/30">
-        <div className="flex gap-1">
+        <div className="flex gap-0 items-center">
           <div className="relative">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onHideContextMenu?.();
+                setShowTextMenu(false);
                 setOpenColorPickerNoteId(showColorPicker ? null : note.id);
               }}
-              className="p-1 hover:bg-black/10 rounded cursor-pointer"
+              className="px-0.5 py-0.5 rounded cursor-pointer text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
               title="Change color"
             >
               <Palette size={14} />
@@ -272,14 +396,79 @@ const NoteSquare = ({
               </div>
             )}
           </div>
+          {/* Text formatting popover via T */}
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onHideContextMenu?.();
+                setOpenColorPickerNoteId(null);
+                // toggle local text menu
+                setShowTextMenu((v) => !v);
+              }}
+              className="px-0.5 py-0.5 rounded cursor-pointer text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
+              title="Text options"
+            >
+              T
+            </button>
+            {showTextMenu && (
+              <div
+                className="text-menu absolute top-7 left-0 bg-transparent p-1 z-50 flex gap-0"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              >
+                <button
+                  className="px-0.5 py-0.5 text-[12px] text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
+                  title="Smaller text"
+                  onClick={() => {
+                    const size = Math.max(10, (note.fontSize || 14) - 2);
+                    onUpdate(note.id, { ...note, fontSize: size });
+                  }}
+                >
+                  <ChevronDown size={12} />
+                </button>
+                <button
+                  className="px-0.5 py-0.5 text-[12px] text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
+                  title="Larger text"
+                  onClick={() => {
+                    const size = Math.min(32, (note.fontSize || 14) + 2);
+                    onUpdate(note.id, { ...note, fontSize: size });
+                  }}
+                >
+                  <ChevronUp size={12} />
+                </button>
+                <button
+                  className="px-0.5 py-0.5 text-[12px] font-bold text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
+                  title="Bold"
+                  onClick={() => {
+                    const next = (note.fontWeight || 400) >= 600 ? 400 : 700;
+                    onUpdate(note.id, { ...note, fontWeight: next });
+                  }}
+                >
+                  B
+                </button>
+                <button
+                  className={`px-0.5 py-0.5 text-[12px] font-semibold transition-colors transition-transform duration-150 hover:scale-110 active:scale-95 ${ (note.markdown ?? true) ? 'text-white' : 'text-gray-700 hover:text-white'}`}
+                  title="Toggle Markdown preview"
+                  onClick={() => {
+                    onUpdate(note.id, { ...note, markdown: !(note.markdown ?? true) });
+                  }}
+                >
+                  MD
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={(e) => {
               e.stopPropagation();
               onHideContextMenu?.();
               setOpenColorPickerNoteId(null);
+              setShowTextMenu(false);
               onAddChild(note.id);
             }}
-            className="p-1 hover:bg-black/10 rounded cursor-pointer"
+            className="px-0.5 py-0.5 rounded cursor-pointer text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
             title="Add child"
           >
             <Plus size={14} />
@@ -289,9 +478,10 @@ const NoteSquare = ({
               e.stopPropagation();
               onHideContextMenu?.();
               setOpenColorPickerNoteId(null);
+              setShowTextMenu(false);
               onDelete(note.id);
             }}
-            className="p-1 hover:bg-black/10 rounded cursor-pointer"
+            className="px-0.5 py-0.5 rounded cursor-pointer text-gray-700 hover:text-white transition-colors transition-transform duration-150 hover:scale-110 active:scale-95"
             title="Delete"
           >
             <Trash2 size={14} />
@@ -347,17 +537,30 @@ const NoteSquare = ({
                 ta.setSelectionRange(start, end);
               }
             }}
-            className="w-full h-full p-1 text-sm resize-none border-none outline-none"
+            className="w-full h-full p-1 resize-none border-none outline-none"
             placeholder="Type here..."
             style={{ 
               backgroundColor: 'transparent',
               color: 'inherit',
+              fontSize: `${note.fontSize || 14}px`,
+              fontWeight: note.fontWeight || 400,
             }}
           />
         ) : (
-          <div className="w-full h-full p-1 text-sm whitespace-pre-wrap">
-            {note.text || 'Double-click to edit'}
-          </div>
+          (note.markdown ?? true) ? (
+            <div
+              className="w-full h-full p-1 overflow-auto"
+              style={{ fontSize: `${note.fontSize || 14}px`, fontWeight: note.fontWeight || 400 }}
+              dangerouslySetInnerHTML={{ __html: markdownToHtml(note.text) }}
+            />
+          ) : (
+            <div
+              className="w-full h-full p-1 whitespace-pre-wrap"
+              style={{ fontSize: `${note.fontSize || 14}px`, fontWeight: note.fontWeight || 400 }}
+            >
+              {note.text || 'Double-click to edit'}
+            </div>
+          )
         )}
       </div>
 
@@ -390,7 +593,7 @@ const NoteSquare = ({
         className="resize-handle absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-black/20 flex items-end justify-end pointer-events-auto"
         onMouseDown={handleResizeStart}
       >
-        <div className="w-4 h-4 border-r-2 border-b-2 border-gray-600 mb-0.5 mr-0.5" />
+        <div className="w-4 h-4 border-r border-b border-gray-600 mb-0.5 mr-0.5" />
       </div>
     </div>
   );
@@ -406,6 +609,9 @@ export default function App() {
       height: '350px',
       x: 20,
       y: 20,
+      fontSize: 14,
+      fontWeight: 400,
+      markdown: true,
       children: [
         {
           id: '2',
@@ -415,6 +621,9 @@ export default function App() {
           height: '150px',
           x: 10,
           y: 10,
+          fontSize: 14,
+          fontWeight: 400,
+          markdown: true,
           children: [],
         },
         {
@@ -425,6 +634,9 @@ export default function App() {
           height: '150px',
           x: 220,
           y: 10,
+          fontSize: 14,
+          fontWeight: 400,
+          markdown: true,
           children: [],
         },
       ],
@@ -646,6 +858,14 @@ export default function App() {
   }, []);
 
   const handleShowContextMenu = useCallback((x, y, noteId) => {
+    // Global guard: never open menu if any overlay/editing is open
+    try {
+      const anyColor = !!document.querySelector('.color-picker');
+      const anyTextMenu = !!document.querySelector('.text-menu');
+      const active = document.activeElement;
+      const anyEditing = !!active && active.tagName === 'TEXTAREA';
+      if (anyColor || anyTextMenu || anyEditing) return;
+    } catch (_) {}
     const menuWidth = 180;
     const menuHeight = 60;
     const margin = 8;
@@ -683,7 +903,26 @@ export default function App() {
     event.preventDefault();
     event.stopPropagation();
     handleHideContextMenu();
-    setOpenColorPickerNoteId(null);
+    let closedSomething = false;
+    // Close color pickers
+    if (openColorPickerNoteId !== null) {
+      setOpenColorPickerNoteId(null);
+      closedSomething = true;
+    }
+    // Close any text menus (broadcast)
+    if (document.querySelector('.text-menu')) {
+      document.dispatchEvent(new Event('closeTextMenus'));
+      closedSomething = true;
+    }
+    // Blur active textarea to exit editing
+    const active = document.activeElement;
+    if (active && active.tagName === 'TEXTAREA') {
+      active.blur();
+      closedSomething = true;
+    }
+    // If we closed something, do not open the add menu
+    if (closedSomething) return;
+    // Otherwise show the background context menu to add a root note
     handleShowContextMenu(event.clientX, event.clientY, null);
   };
 
@@ -782,6 +1021,9 @@ export default function App() {
           height: `${newHeight}px`,
           x: 10,
           y: spawnY,
+          fontSize: 14,
+          fontWeight: 400,
+          markdown: true,
           children: [],
         };
         
@@ -842,6 +1084,9 @@ export default function App() {
       height: '250px',
       x: 50,
       y: 50,
+      fontSize: 14,
+      fontWeight: 400,
+      markdown: false,
       children: [],
     };
     setNotes((prev) => [...prev, newNote]);
@@ -928,7 +1173,24 @@ export default function App() {
         )}
 
         <div className="relative min-h-screen"
-             onContextMenu={handleBackgroundContextMenu}>
+             onContextMenu={handleBackgroundContextMenu}
+             onContextMenuCapture={(event) => {
+               // Global guard: if any overlay or editing is open, consume and close
+               try {
+                 const anyColor = !!document.querySelector('.color-picker') || openColorPickerNoteId !== null;
+                 const anyTextMenu = !!document.querySelector('.text-menu');
+                 const active = document.activeElement;
+                 const anyEditing = !!active && active.tagName === 'TEXTAREA';
+                 if (anyColor || anyTextMenu || anyEditing) {
+                   event.preventDefault();
+                   event.stopPropagation();
+                   handleHideContextMenu();
+                   if (openColorPickerNoteId !== null) setOpenColorPickerNoteId(null);
+                   if (anyTextMenu) document.dispatchEvent(new Event('closeTextMenus'));
+                   if (anyEditing && active && active.blur) active.blur();
+                 }
+               } catch (_) {}
+             }}>
           {notes.map((note) => (
             <NoteSquare
               key={note.id}
