@@ -1,4 +1,13 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from 'react';
+import type {
+  MouseEvent as ReactMouseEvent,
+  ChangeEvent as ReactChangeEvent,
+} from 'react';
 import { Plus, Trash2, Palette, ChevronUp, ChevronDown } from 'lucide-react';
 
 const PRESET_COLORS = [
@@ -14,7 +23,33 @@ const PRESET_COLORS = [
   '#fef9c3', '#fef08a', '#fde047', '#fcd34d', '#fbbf24'
 ];
 
-const NoteSquare = ({
+type Note = {
+  id: string;
+  text: string;
+  color: string;
+  width: string;
+  height: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  fontWeight: number;
+  markdown: boolean;
+  children: Note[];
+};
+
+type NoteSquareProps = {
+  note: Note;
+  onUpdate: (id: string, updated: Note) => void;
+  onDelete: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onShowContextMenu?: (x: number, y: number, noteId: string) => void;
+  onHideContextMenu?: () => void;
+  openColorPickerNoteId: string | null;
+  setOpenColorPickerNoteId: React.Dispatch<React.SetStateAction<string | null>>;
+  depth?: number;
+};
+
+const NoteSquare: React.FC<NoteSquareProps> = ({
   note,
   onUpdate,
   onDelete,
@@ -24,19 +59,26 @@ const NoteSquare = ({
   openColorPickerNoteId,
   setOpenColorPickerNoteId,
   depth = 0,
-  allNotes = [],
-  parentWidth,
-  parentHeight,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0, noteX: 0, noteY: 0 });
-  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; noteX: number; noteY: number }>({
+    x: 0,
+    y: 0,
+    noteX: 0,
+    noteY: 0,
+  });
+  const [resizeStart, setResizeStart] = useState<{ x: number; y: number; width: number; height: number }>({
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  });
   const usedColors = PRESET_COLORS;
   const showColorPicker = openColorPickerNoteId === note.id;
-  const textareaRef = useRef(null);
-  const noteRef = useRef(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const noteRef = useRef<HTMLDivElement | null>(null);
   const [showTextMenu, setShowTextMenu] = useState(false);
   const suppressNextContextMenuRef = useRef(false);
 
@@ -47,21 +89,25 @@ const NoteSquare = ({
   }, []);
 
   // --- Lightweight Markdown support (no external deps) ---
-  const escapeHtml = (s) =>
+  const escapeHtml = (s: string) =>
     String(s)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-  const processInline = (s) => {
+  const processInline = (s: string) => {
     // inline code first
-    s = s.replace(/`([^`]+)`/g, (m, code) => `<code class="px-1 py-0.5 bg-black/10 rounded">${escapeHtml(code)}</code>`);
+    s = s.replace(
+      /`([^`]+)`/g,
+      (_m: string, code: string) =>
+        `<code class="px-1 py-0.5 bg-black/10 rounded">${escapeHtml(code)}</code>`,
+    );
     // bold
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     // italic (single *)
     s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     // links [text](url)
-    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m: string, text: string, url: string) => {
       const safe = /^https?:\/\//i.test(url) ? url : '#';
       const label = escapeHtml(text);
       return `<a href="${safe}" target="_blank" rel="noopener noreferrer" class="text-blue-700 underline">${label}</a>`;
@@ -69,7 +115,7 @@ const NoteSquare = ({
     return s;
   };
 
-  const markdownToHtml = (input) => {
+  const markdownToHtml = (input: string) => {
     if (!input) return '';
     const lines = String(input).split(/\r?\n/);
     let html = '';
@@ -141,31 +187,17 @@ const NoteSquare = ({
     return html;
   };
 
-  const checkOverlap = (x, y, width, height, excludeId) => {
-    const siblings = allNotes.filter(n => n.id !== excludeId);
-    for (let sibling of siblings) {
-      const sibWidth = parseInt(sibling.width) || 280;
-      const sibHeight = parseInt(sibling.height) || 180;
-      const sibX = sibling.x || 0;
-      const sibY = sibling.y || 0;
-      
-      if (!(x + width <= sibX || x >= sibX + sibWidth || 
-            y + height <= sibY || y >= sibY + sibHeight)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const handleDragStart = (e) => {
+  const handleDragStart = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!(e.target instanceof HTMLElement)) return;
+    const target = e.target;
     // Do not start dragging when interacting with UI controls or while editing text
     if (
-      e.target.tagName === 'BUTTON' ||
-      e.target.closest('.color-picker') ||
-      e.target.closest('.resize-handle') ||
+      target.tagName === 'BUTTON' ||
+      target.closest('.color-picker') ||
+      target.closest('.resize-handle') ||
       isEditing ||
-      e.target.tagName === 'TEXTAREA' ||
-      e.target.closest('.note-content')
+      target.tagName === 'TEXTAREA' ||
+      target.closest('.note-content')
     ) {
       return;
     }
@@ -189,10 +221,12 @@ const NoteSquare = ({
     });
   };
 
-  const handleDoubleClick = (e) => {
-    if (e.target.tagName === 'BUTTON' || 
-        e.target.closest('.color-picker') ||
-        e.target.closest('.resize-handle')) {
+  const handleDoubleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!(e.target instanceof HTMLElement)) return;
+    const target = e.target;
+    if (target.tagName === 'BUTTON' || 
+        target.closest('.color-picker') ||
+        target.closest('.resize-handle')) {
       return;
     }
     if (isEditing) {
@@ -207,7 +241,7 @@ const NoteSquare = ({
     setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
-  const handleDragMove = (e) => {
+  const handleDragMove = (e: MouseEvent) => {
     if (!isDragging) return;
     const deltaX = e.clientX - dragStart.x;
     const deltaY = e.clientY - dragStart.y;
@@ -217,7 +251,7 @@ const NoteSquare = ({
     onUpdate(note.id, { ...note, x: newX, y: newY });
   };
 
-  const handleResizeStart = (e) => {
+  const handleResizeStart = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     onHideContextMenu?.();
@@ -231,7 +265,7 @@ const NoteSquare = ({
     });
   };
 
-  const handleResizeMove = (e) => {
+  const handleResizeMove = (e: MouseEvent) => {
     if (!isResizing) return;
     const deltaX = e.clientX - resizeStart.x;
     const deltaY = e.clientY - resizeStart.y;
@@ -244,7 +278,7 @@ const NoteSquare = ({
 
   useEffect(() => {
     if (isDragging) {
-      const handleMove = (e) => handleDragMove(e);
+      const handleMove = (e: MouseEvent) => handleDragMove(e);
       const handleUp = () => setIsDragging(false);
       document.addEventListener('mousemove', handleMove);
       document.addEventListener('mouseup', handleUp);
@@ -257,7 +291,7 @@ const NoteSquare = ({
 
   useEffect(() => {
     if (isResizing) {
-      const handleMove = (e) => handleResizeMove(e);
+      const handleMove = (e: MouseEvent) => handleResizeMove(e);
       const handleUp = () => setIsResizing(false);
       document.addEventListener('mousemove', handleMove);
       document.addEventListener('mouseup', handleUp);
@@ -268,17 +302,17 @@ const NoteSquare = ({
     }
   }, [isResizing, resizeStart]);
 
-  const handleColorChange = (color) => {
+  const handleColorChange = (color: string) => {
     onUpdate(note.id, { ...note, color });
     // Keep palette positions stable and close after selection
     setOpenColorPickerNoteId(null);
   };
 
-  const handleTextChange = (e) => {
+  const handleTextChange = (e: ReactChangeEvent<HTMLTextAreaElement>) => {
     onUpdate(note.id, { ...note, text: e.target.value });
   };
 
-  const handleContextMenu = (e) => {
+  const handleContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     onHideContextMenu?.();
@@ -287,10 +321,13 @@ const NoteSquare = ({
       return;
     }
     // Determine if anything is open anywhere: color menu, text menu, or editing
-    const anyColorMenuOpen = !!document.querySelector('.color-picker') || openColorPickerNoteId !== null || showColorPicker;
+    const anyColorMenuOpen =
+      !!document.querySelector('.color-picker') ||
+      openColorPickerNoteId !== null ||
+      showColorPicker;
     const anyTextMenuOpen = showTextMenu || !!document.querySelector('.text-menu');
-    const active = document.activeElement as HTMLElement | null;
-    const anyEditing = isEditing || (active && active.tagName === 'TEXTAREA');
+    const active = document.activeElement;
+    const anyEditing = isEditing || (active instanceof HTMLTextAreaElement);
 
     if (anyColorMenuOpen || anyTextMenuOpen || anyEditing) {
       // Close all overlays and exit editing
@@ -298,7 +335,7 @@ const NoteSquare = ({
       setShowTextMenu(false);
       try { document.dispatchEvent(new Event('closeTextMenus')); } catch(_) {}
       if (isEditing) setIsEditing(false);
-      if (active && (active as any).blur) (active as any).blur();
+      if (active instanceof HTMLElement) active.blur();
       return; // do not open context menu
     }
 
@@ -543,9 +580,6 @@ const NoteSquare = ({
                   openColorPickerNoteId={openColorPickerNoteId}
                   setOpenColorPickerNoteId={setOpenColorPickerNoteId}
                   depth={depth + 1}
-                  allNotes={note.children}
-                  parentWidth={parseInt(note.width) || 280}
-                  parentHeight={(parseInt(note.height) || 180) - 38}
                 />
               </div>
             ))}
@@ -564,7 +598,7 @@ const NoteSquare = ({
 };
 
 export default function App() {
-  const [notes, setNotes] = useState([
+  const [notes, setNotes] = useState<Note[]>([
     {
       id: '1',
       text: 'Parent note - start typing with a double left click!\n\nClick + to add children.\nDrag to move, resize from corner.',
@@ -610,18 +644,24 @@ export default function App() {
     },
   ]);
 
-  const [openColorPickerNoteId, setOpenColorPickerNoteId] = useState(null);
-  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, noteId: null });
+  const [openColorPickerNoteId, setOpenColorPickerNoteId] = useState<string | null>(null);
+  type ContextMenuState = { visible: boolean; x: number; y: number; noteId: string | null };
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    noteId: null,
+  });
   const [showJson, setShowJson] = useState(false);
-  const fileInputRef = useRef(null);
-  const saveTimeoutRef = useRef(null);
-  const lastSnapshotRef = useRef(0);
-  const [lastSavedAt, setLastSavedAt] = useState(null);
-  const [snapshotList, setSnapshotList] = useState([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const lastSnapshotRef = useRef<number>(0);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [snapshotList, setSnapshotList] = useState<number[]>([]);
 
   // --- IndexedDB helpers for robust persistence ---
-  const idbHelpers = useRef({ dbPromise: null });
-  const getDB = () => {
+  const idbHelpers = useRef<{ dbPromise: Promise<IDBDatabase> | null }>({ dbPromise: null });
+  const getDB = (): Promise<IDBDatabase> => {
     if (!('indexedDB' in window)) return Promise.reject(new Error('No IDB'));
     if (!idbHelpers.current.dbPromise) {
       idbHelpers.current.dbPromise = new Promise((resolve, reject) => {
@@ -638,7 +678,7 @@ export default function App() {
     return idbHelpers.current.dbPromise;
   };
 
-  const idbPut = async (store, key, value) => {
+  const idbPut = async (store: 'kv' | 'snapshots', key: IDBValidKey, value: unknown) => {
     const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
@@ -647,7 +687,7 @@ export default function App() {
       tx.objectStore(store).put(value, key);
     });
   };
-  const idbGet = async (store, key) => {
+  const idbGet = async (store: 'kv' | 'snapshots', key: IDBValidKey) => {
     const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readonly');
@@ -657,17 +697,17 @@ export default function App() {
       req.onerror = () => reject(req.error);
     });
   };
-  const idbGetAllKeys = async (store) => {
+  const idbGetAllKeys = async (store: 'kv' | 'snapshots'): Promise<IDBValidKey[]> => {
     const db = await getDB();
-    return new Promise((resolve, reject) => {
+    return new Promise<IDBValidKey[]>((resolve, reject) => {
       const tx = db.transaction(store, 'readonly');
       tx.onerror = () => reject(tx.error);
       const req = tx.objectStore(store).getAllKeys();
-      req.onsuccess = () => resolve(req.result || []);
+      req.onsuccess = () => resolve((req.result as IDBValidKey[]) || []);
       req.onerror = () => reject(req.error);
     });
   };
-  const idbDelete = async (store, key) => {
+  const idbDelete = async (store: 'kv' | 'snapshots', key: IDBValidKey) => {
     const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
@@ -677,21 +717,21 @@ export default function App() {
     });
   };
 
-  const saveLatestIDB = async (data) => {
+  const saveLatestIDB = async (data: Note[]) => {
     try {
       await idbPut('kv', 'latest', { data, ts: Date.now() });
       setLastSavedAt(Date.now());
     } catch (_) {}
   };
-  const loadLatestIDB = async () => {
+  const loadLatestIDB = async (): Promise<Note[] | null> => {
     try {
-      const res = await idbGet('kv', 'latest');
-      return res?.data;
+      const res = (await idbGet('kv', 'latest')) as { data?: Note[] } | undefined;
+      return res?.data ?? null;
     } catch (_) {
       return null;
     }
   };
-  const saveSnapshotIDB = async (data) => {
+  const saveSnapshotIDB = async (data: Note[]) => {
     try {
       const id = Date.now();
       await idbPut('snapshots', id, { id, data, ts: id });
@@ -702,17 +742,20 @@ export default function App() {
   const refreshSnapshotList = async () => {
     try {
       const keys = await idbGetAllKeys('snapshots');
-      const sorted = [...keys].sort((a, b) => Number(b) - Number(a));
-      setSnapshotList(sorted.slice(0, 10).map((k) => Number(k)));
+      const sorted = [...keys].map(Number).sort((a, b) => b - a);
+      setSnapshotList(sorted.slice(0, 10));
     } catch (_) { setSnapshotList([]); }
   };
-  const loadSnapshotIDB = async (id) => {
+  const loadSnapshotIDB = async (id: number): Promise<Note[] | null> => {
     try {
       const db = await getDB();
       return new Promise((resolve, reject) => {
         const tx = db.transaction('snapshots', 'readonly');
         const req = tx.objectStore('snapshots').get(id);
-        req.onsuccess = () => resolve(req.result?.data || null);
+        req.onsuccess = () => {
+          const result = req.result as { data?: Note[] } | undefined;
+          resolve(result?.data ?? null);
+        };
         req.onerror = () => reject(req.error);
       });
     } catch (_) { return null; }
@@ -763,7 +806,12 @@ export default function App() {
         lastSnapshotRef.current = now;
       })();
     }
-    return () => clearTimeout(saveTimeoutRef.current);
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
   }, [notes]);
 
   const handleSaveToBrowser = async () => {
@@ -800,7 +848,7 @@ export default function App() {
   };
 
   const handleImportClick = () => fileInputRef.current?.click();
-  const handleImportJSON = (e) => {
+  const handleImportJSON = (e: ReactChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -824,13 +872,14 @@ export default function App() {
     });
   }, []);
 
-  const handleShowContextMenu = useCallback((x, y, noteId) => {
+  const handleShowContextMenu = useCallback(
+    (x: number, y: number, noteId: string | null) => {
     // Global guard: never open menu if any overlay/editing is open
     try {
       const anyColor = !!document.querySelector('.color-picker');
       const anyTextMenu = !!document.querySelector('.text-menu');
       const active = document.activeElement;
-      const anyEditing = !!active && active.tagName === 'TEXTAREA';
+      const anyEditing = active instanceof HTMLTextAreaElement;
       if (anyColor || anyTextMenu || anyEditing) return;
     } catch (_) {}
     const menuWidth = 180;
@@ -838,18 +887,21 @@ export default function App() {
     const margin = 8;
     const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
     const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
-    const clampedX = typeof window !== 'undefined'
-      ? Math.max(margin, Math.min(x, viewportWidth - menuWidth - margin))
-      : x;
-    const clampedY = typeof window !== 'undefined'
-      ? Math.max(margin, Math.min(y, viewportHeight - menuHeight - margin))
-      : y;
+    const clampedX =
+      typeof window !== 'undefined'
+        ? Math.max(margin, Math.min(x, viewportWidth - menuWidth - margin))
+        : x;
+    const clampedY =
+      typeof window !== 'undefined'
+        ? Math.max(margin, Math.min(y, viewportHeight - menuHeight - margin))
+        : y;
     setContextMenu({ visible: true, x: clampedX, y: clampedY, noteId });
-  }, []);
+  },
+  []);
 
   useEffect(() => {
     const handleGlobalMouseDown = () => handleHideContextMenu();
-    const handleKeyDown = (event) => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         handleHideContextMenu();
       }
@@ -866,7 +918,7 @@ export default function App() {
     };
   }, [handleHideContextMenu]);
 
-  const handleBackgroundContextMenu = (event) => {
+  const handleBackgroundContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
     handleHideContextMenu();
@@ -883,7 +935,7 @@ export default function App() {
     }
     // Blur active textarea to exit editing
     const active = document.activeElement;
-    if (active && active.tagName === 'TEXTAREA') {
+    if (active instanceof HTMLTextAreaElement) {
       active.blur();
       closedSomething = true;
     }
@@ -893,45 +945,52 @@ export default function App() {
     handleShowContextMenu(event.clientX, event.clientY, null);
   };
 
-  const findAndUpdate = (items, id, updatedNote) => {
-    return items.map((item) => {
+  const adjustToFitChildren = (note: Note): Note => {
+    if (!note.children || note.children.length === 0) return note;
+    let maxX = 0;
+    let maxY = 0;
+    note.children.forEach((child) => {
+      const childRight = (child.x || 0) + (parseInt(child.width) || 200);
+      const childBottom = (child.y || 0) + (parseInt(child.height) || 150);
+      maxX = Math.max(maxX, childRight);
+      maxY = Math.max(maxY, childBottom);
+    });
+    const currentWidth = parseInt(note.width) || 500;
+    const currentHeight = parseInt(note.height) || 350;
+    const requiredWidth = maxX + 20;
+    const requiredHeight = maxY + 58;
+    const nextWidth = Math.max(currentWidth, requiredWidth);
+    const nextHeight = Math.max(currentHeight, requiredHeight);
+    if (nextWidth !== currentWidth || nextHeight !== currentHeight) {
+      return { ...note, width: `${nextWidth}px`, height: `${nextHeight}px` };
+    }
+    return note;
+  };
+
+  const findAndUpdate = (items: Note[], id: string, updatedNote: Note): Note[] => {
+    let changed = false;
+    const result = items.map((item: Note) => {
       if (item.id === id) {
-        return updatedNote;
+        changed = true;
+        return adjustToFitChildren(updatedNote);
       }
-      if (item.children) {
+      if (item.children && item.children.length > 0) {
         const updatedChildren = findAndUpdate(item.children, id, updatedNote);
-        
-        let maxX = 0;
-        let maxY = 0;
-        updatedChildren.forEach(child => {
-          const childRight = (child.x || 0) + (parseInt(child.width) || 200);
-          const childBottom = (child.y || 0) + (parseInt(child.height) || 150);
-          maxX = Math.max(maxX, childRight);
-          maxY = Math.max(maxY, childBottom);
-        });
-        
-        const currentWidth = parseInt(item.width) || 500;
-        const currentHeight = parseInt(item.height) || 350;
-        const requiredWidth = maxX + 20;
-        const requiredHeight = maxY + 58;
-        
-        if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
-          return {
-            ...item,
-            width: `${Math.max(currentWidth, requiredWidth)}px`,
-            height: `${Math.max(currentHeight, requiredHeight)}px`,
-            children: updatedChildren
-          };
+        const childrenChanged =
+          updatedChildren.length !== item.children.length ||
+          updatedChildren.some((child, idx) => child !== item.children![idx]);
+        if (childrenChanged) {
+          changed = true;
+          return adjustToFitChildren({ ...item, children: updatedChildren });
         }
-        
-        return { ...item, children: updatedChildren };
       }
       return item;
     });
+    return changed ? result : items;
   };
 
-  const findAndDelete = (items, id) => {
-    return items.filter((item) => {
+  const findAndDelete = (items: Note[], id: string): Note[] => {
+    return items.filter((item: Note) => {
       if (item.id === id) {
         return false;
       }
@@ -942,28 +1001,9 @@ export default function App() {
     });
   };
 
-  const findAvailablePosition = (parent, newWidth, newHeight) => {
-    const children = parent.children || [];
-    
-    if (children.length === 0) {
-      return { x: 10, y: 10 };
-    }
-    
-    let maxX = 0;
-    let maxY = 0;
-    
-    children.forEach(child => {
-      const childRight = (child.x || 0) + (parseInt(child.width) || 200);
-      const childBottom = (child.y || 0) + (parseInt(child.height) || 150);
-      maxX = Math.max(maxX, childRight);
-      maxY = Math.max(maxY, childBottom);
-    });
-    
-    return { x: 10, y: maxY + 10 };
-  };
-
-  const findAndAddChild = (items, parentId) => {
-    return items.map((item) => {
+  const findAndAddChild = (items: Note[], parentId: string): Note[] => {
+    let changed = false;
+    const result = items.map((item: Note) => {
       if (item.id === parentId) {
         const newWidth = 200;
         const newHeight = 150;
@@ -980,7 +1020,7 @@ export default function App() {
           spawnY = maxBottom + 10;
         }
         
-        const newChild = {
+        const newChild: Note = {
           id: Date.now().toString(),
           text: 'New note',
           color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0') + '40',
@@ -995,46 +1035,35 @@ export default function App() {
         };
         
         const allChildren = [...children, newChild];
-        
-        let maxX = 0;
-        let maxY = 0;
-        allChildren.forEach(child => {
-          const childRight = (child.x || 0) + (parseInt(child.width) || 200);
-          const childBottom = (child.y || 0) + (parseInt(child.height) || 150);
-          maxX = Math.max(maxX, childRight);
-          maxY = Math.max(maxY, childBottom);
-        });
-        
-        const currentWidth = parseInt(item.width) || 500;
-        const currentHeight = parseInt(item.height) || 350;
-        const requiredWidth = maxX + 20;
-        const requiredHeight = maxY + 58;
-        
-        return {
-          ...item,
-          width: `${Math.max(currentWidth, requiredWidth)}px`,
-          height: `${Math.max(currentHeight, requiredHeight)}px`,
-          children: allChildren,
-        };
+        changed = true;
+        return adjustToFitChildren({ ...item, children: allChildren });
       }
-      if (item.children) {
-        return { ...item, children: findAndAddChild(item.children, parentId) };
+      if (item.children && item.children.length > 0) {
+        const updatedChildren = findAndAddChild(item.children, parentId);
+        const childrenChanged =
+          updatedChildren.length !== item.children.length ||
+          updatedChildren.some((child, idx) => child !== item.children![idx]);
+        if (childrenChanged) {
+          changed = true;
+          return adjustToFitChildren({ ...item, children: updatedChildren });
+        }
       }
       return item;
     });
+    return changed ? result : items;
   };
 
-  const handleUpdate = (id, updatedNote) => {
+  const handleUpdate = (id: string, updatedNote: Note) => {
     setNotes((prev) => findAndUpdate(prev, id, updatedNote));
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = (id: string) => {
     handleHideContextMenu();
     setOpenColorPickerNoteId(null);
     setNotes((prev) => findAndDelete(prev, id));
   };
 
-  const handleAddChild = (parentId) => {
+  const handleAddChild = (parentId: string) => {
     handleHideContextMenu();
     setOpenColorPickerNoteId(null);
     setNotes((prev) => findAndAddChild(prev, parentId));
@@ -1043,7 +1072,7 @@ export default function App() {
   const handleAddRoot = () => {
     handleHideContextMenu();
     setOpenColorPickerNoteId(null);
-    const newNote = {
+    const newNote: Note = {
       id: Date.now().toString(),
       text: 'New Note',
       color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0') + '40',
@@ -1131,6 +1160,7 @@ export default function App() {
           ref={fileInputRef}
           onChange={handleImportJSON}
           className="hidden"
+          aria-label="Import notes from JSON file"
         />
 
         {showJson && (
@@ -1147,14 +1177,14 @@ export default function App() {
                  const anyColor = !!document.querySelector('.color-picker') || openColorPickerNoteId !== null;
                  const anyTextMenu = !!document.querySelector('.text-menu');
                  const active = document.activeElement;
-                 const anyEditing = !!active && active.tagName === 'TEXTAREA';
+                 const anyEditing = active instanceof HTMLTextAreaElement;
                  if (anyColor || anyTextMenu || anyEditing) {
                    event.preventDefault();
                    event.stopPropagation();
                    handleHideContextMenu();
                    if (openColorPickerNoteId !== null) setOpenColorPickerNoteId(null);
                    if (anyTextMenu) document.dispatchEvent(new Event('closeTextMenus'));
-                   if (anyEditing && active && active.blur) active.blur();
+                   if (active instanceof HTMLElement && anyEditing) active.blur();
                  }
                } catch (_) {}
              }}>
@@ -1169,7 +1199,6 @@ export default function App() {
               onHideContextMenu={handleHideContextMenu}
               openColorPickerNoteId={openColorPickerNoteId}
               setOpenColorPickerNoteId={setOpenColorPickerNoteId}
-              allNotes={notes}
             />
           ))}
         </div>
