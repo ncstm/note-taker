@@ -1,39 +1,3 @@
-// @ts-nocheck
-// import { useState } from 'react'
-// import reactLogo from './assets/react.svg'
-// import viteLogo from '/vite.svg'
-// import './App.css'
-
-// function App() {
-//   const [count, setCount] = useState(0)
-
-//   return (
-//     <>
-//       <div>
-//         <a href="https://vite.dev" target="_blank">
-//           <img src={viteLogo} className="logo" alt="Vite logo" />
-//         </a>
-//         <a href="https://react.dev" target="_blank">
-//           <img src={reactLogo} className="logo react" alt="React logo" />
-//         </a>
-//       </div>
-//       <h1>Vite + React</h1>
-//       <div className="card">
-//         <button onClick={() => setCount((count) => count + 1)}>
-//           count is {count}
-//         </button>
-//         <p>
-//           Edit <code>src/App.tsx</code> and save to test HMR
-//         </p>
-//       </div>
-//       <p className="read-the-docs">
-//         Click on the Vite and React logos to learn more
-//       </p>
-//     </>
-//   )
-// }
-
-// export default App
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Palette, ChevronUp, ChevronDown } from 'lucide-react';
 
@@ -603,7 +567,7 @@ export default function App() {
   const [notes, setNotes] = useState([
     {
       id: '1',
-      text: 'Parent note - just start typing!\n\nClick + to add children.\nDrag to move, resize from corner.',
+      text: 'Parent note - start typing with a double left click!\n\nClick + to add children.\nDrag to move, resize from corner.',
       color: '#fef3c7',
       width: '500px',
       height: '350px',
@@ -615,12 +579,14 @@ export default function App() {
       children: [
         {
           id: '2',
-          text: 'Child 1',
-          color: '#dbeafe',
+          text: 'Note 1',
+          // color: '#1b70dfa1',
+          color: '#5eb5dd3f',
           width: '200px',
           height: '150px',
           x: 10,
-          y: 10,
+          // y: 10,
+          y: 120,
           fontSize: 14,
           fontWeight: 400,
           markdown: true,
@@ -628,12 +594,13 @@ export default function App() {
         },
         {
           id: '3',
-          text: 'Child 2',
-          color: '#fce7f3',
+          text: 'Note 2',
+          // color: '#cc649fbb',
+          color: '#ffc8fc4f',
           width: '200px',
           height: '150px',
-          x: 220,
-          y: 10,
+          x: 240,
+          y: 120,
           fontSize: 14,
           fontWeight: 400,
           markdown: true,
@@ -1002,7 +969,7 @@ export default function App() {
         const newHeight = 150;
         
         const children = item.children || [];
-        let spawnY = 10;
+        let spawnY = 40;
         
         if (children.length > 0) {
           let maxBottom = 0;
@@ -1172,7 +1139,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="relative min-h-screen"
+        <div className="relative"
              onContextMenu={handleBackgroundContextMenu}
              onContextMenuCapture={(event) => {
                // Global guard: if any overlay or editing is open, consume and close
