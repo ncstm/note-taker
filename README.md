@@ -4,7 +4,7 @@
 <img src=public/Example.png width="100%"/>
 </div>
 
-# Nested Notes (React + TypeScript + Vite)
+# Nested Notes
 
 An in-browser nested sticky-note tool with Markdown preview, drag/resize, color picking, autosave to IndexedDB/localStorage, and JSON import/export.
 
